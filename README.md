@@ -1,6 +1,6 @@
 # trade-match
 
-trade-match is a low latency, in-memory order matching engine capable of vertically scaling to hundreds of thousands of transactions per second.
+trade-match is a low latency, in-memory central limit order book capable of vertically scaling to hundreds of thousands of transactions per second.
 
 ## Getting Started
 
@@ -22,7 +22,7 @@ Clone the repository:
 git clone https://github.com/yourusername/market-matching-engine.git
 ```
 
-## Unit Tests
+## Usage
 
 ### Running Unit Tests
 
@@ -32,9 +32,7 @@ To run the unit tests, use the following command:
 cargo test
 ```
 
-## Benchmarks
-
-### Running Unit Tests
+### Running Benchmarks
 
 We use the criterion crate for benchmarking. To run the benchmarks, use the following command:
 
