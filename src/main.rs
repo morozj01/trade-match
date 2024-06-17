@@ -4,5 +4,5 @@ fn main() {
     // @TODO Implement TCP/IP request processing
 
     let market = Market::new("AAPL");
-    println!("Created a new market for the symbol {:?}", market.symbol())
+    println!("Created a new market for the symbol {:?}", market.symbol());
 }

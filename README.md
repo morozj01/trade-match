@@ -44,8 +44,11 @@ cargo bench
 
 ### Planned Features
 
-- Support for additional order types (market, stop limit)
-- Multithreading/parallelization at the symbol level
-- TCP/IP API for order entry
-- Events API for match and cancel notifications
-- Additional benchmarking and load testing
+- [x] Support for the limit order type
+- [x] Support for the market order type
+- [ ] TCP/IP based order entry API
+- [ ] Order matched notifications
+- [ ] Order cancelled notifications
+- [ ] Multithreading/parallelization at the symbol level
+- [ ] Memory pooling
+- [ ] Additional benchmarking/stress testing
