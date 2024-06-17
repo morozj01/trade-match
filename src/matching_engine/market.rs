@@ -45,9 +45,99 @@ impl<'a> Market<'a> {
         self.orders.contains_key(&order_id)
     }
 
+    pub fn add_market_bid(&mut self, mut quantity: f32) -> (bool, f32) {
+        if self.lowest_ask == f32::INFINITY {
+            return (false, quantity);
+        }
+
+        let mut cursor = self
+            .ask_levels
+            .lower_bound_mut(Included(&PriceLevelKeyAsk::new(self.lowest_ask)));
+
+        // iterate over price levels
+        while quantity > 0.0 && cursor.value().is_some() {
+            let level = cursor.value_mut().unwrap();
+
+            // iterate over orders within a single price level
+            while quantity > 0.0 && level.peek_next_order().is_some() {
+                let next_order = level.peek_next_order().unwrap();
+
+                match next_order.quantity() <= quantity {
+                    true => {
+                        quantity -= next_order.quantity();
+                        self.orders.remove(&next_order.id());
+                        level.remove_next_order();
+                    }
+                    false => {
+                        next_order.remove_quantity(quantity);
+                        quantity = 0.0;
+                    }
+                }
+            }
+
+            if quantity > 0.0 {
+                cursor.move_next();
+            }
+        }
+
+        if quantity > 0.0 {
+            self.lowest_ask = f32::INFINITY;
+            return (false, quantity);
+        } else {
+            let cursor_price = cursor.value().unwrap().price();
+            self.reset_best_ask(Some(cursor_price));
+            return (true, 0.0);
+        }
+    }
+
+    pub fn add_market_ask(&mut self, mut quantity: f32) -> (bool, f32) {
+        if self.highest_bid == f32::NEG_INFINITY {
+            return (false, quantity);
+        }
+
+        let mut cursor = self
+            .bid_levels
+            .lower_bound_mut(Included(&PriceLevelKeyBid::new(self.highest_bid)));
+
+        // iterate over price levels
+        while quantity > 0.0 && cursor.value().is_some() {
+            let level = cursor.value_mut().unwrap();
+
+            // iterate over orders within a single price level
+            while quantity > 0.0 && level.peek_next_order().is_some() {
+                let next_order = level.peek_next_order().unwrap();
+
+                match next_order.quantity() <= quantity {
+                    true => {
+                        quantity -= next_order.quantity();
+                        self.orders.remove(&next_order.id());
+                        level.remove_next_order();
+                    }
+                    false => {
+                        next_order.remove_quantity(quantity);
+                        quantity = 0.0;
+                    }
+                }
+            }
+
+            if quantity > 0.0 {
+                cursor.move_next();
+            }
+        }
+
+        if quantity > 0.0 {
+            self.highest_bid = f32::NEG_INFINITY;
+            return (false, quantity);
+        } else {
+            let cursor_price = cursor.value().unwrap().price();
+            self.reset_best_bid(Some(cursor_price));
+            return (true, 0.0);
+        }
+    }
+
     pub fn add_limit_bid(&mut self, price: f32, mut quantity: f32) -> Result<u64, &str> {
         if !Market::check_precision(price) {
-            return Err("Price cannot have more then 2 decimal places");
+            return Err("Price must be positive and cannot have more then 2 decimal places");
         }
 
         // marketable order
@@ -84,7 +174,7 @@ impl<'a> Market<'a> {
 
     pub fn add_limit_ask(&mut self, price: f32, mut quantity: f32) -> Result<u64, &str> {
         if !Market::check_precision(price) {
-            return Err("Price cannot have more then 2 decimal places");
+            return Err("Price must be positive and cannot have more then 2 decimal places");
         }
 
         // marketable order
@@ -153,12 +243,12 @@ impl<'a> Market<'a> {
 
     fn execute_limit_bid(&mut self, price: f32, mut quantity: f32) -> f32 {
         let range_start = PriceLevelKeyAsk::new(self.lowest_ask);
-        let range_end = PriceLevelKeyAsk::new(price + 0.1);
+        let range_end = PriceLevelKeyAsk::new(price);
 
         let mut final_reached = self.lowest_ask;
         let mut final_has_quantity = true;
 
-        for (_, price_level) in self.ask_levels.range_mut(range_start..range_end) {
+        for (_, price_level) in self.ask_levels.range_mut(range_start..=range_end) {
             while quantity > 0.0 && price_level.peek_next_order().is_some() {
                 let next_order = price_level.peek_next_order().unwrap();
                 match next_order.quantity() <= quantity {
@@ -176,6 +266,10 @@ impl<'a> Market<'a> {
 
             final_reached = price_level.price();
             final_has_quantity = price_level.quantity() > 0.0;
+
+            if quantity == 0.0 {
+                break;
+            }
         }
 
         if final_has_quantity {
@@ -189,12 +283,12 @@ impl<'a> Market<'a> {
 
     fn execute_limit_ask(&mut self, price: f32, mut quantity: f32) -> f32 {
         let range_start = PriceLevelKeyBid::new(self.highest_bid);
-        let range_end = PriceLevelKeyBid::new(price - 0.1);
+        let range_end = PriceLevelKeyBid::new(price);
 
         let mut final_reached = self.lowest_ask;
         let mut final_has_quantity = true;
 
-        for (_, price_level) in self.bid_levels.range_mut(range_start..range_end) {
+        for (_, price_level) in self.bid_levels.range_mut(range_start..=range_end) {
             while quantity > 0.0 && price_level.peek_next_order().is_some() {
                 let next_order = price_level.peek_next_order().unwrap();
                 match next_order.quantity() <= quantity {
@@ -212,6 +306,10 @@ impl<'a> Market<'a> {
 
             final_reached = price_level.price();
             final_has_quantity = price_level.quantity() > 0.0;
+
+            if quantity == 0.0 {
+                break;
+            }
         }
 
         if final_has_quantity {
@@ -234,7 +332,7 @@ impl<'a> Market<'a> {
 
         let mut final_has_quantity = false;
 
-        while cursor.peek_next().is_some() {
+        while cursor.value().is_some() {
             let level = cursor.value().unwrap();
 
             if level.quantity() > 0.0 {
@@ -262,7 +360,7 @@ impl<'a> Market<'a> {
 
         let mut final_has_quantity = false;
 
-        while cursor.peek_next().is_some() {
+        while cursor.value().is_some() {
             let level = cursor.value().unwrap();
 
             if level.quantity() > 0.0 {
@@ -285,6 +383,6 @@ impl<'a> Market<'a> {
     }
 
     fn check_precision(float: f32) -> bool {
-        (float * 100.0).fract() == 0.0
+        (float * 100.0).fract() == 0.0 && float > 0.0
     }
 }
