@@ -45,93 +45,31 @@ impl<'a> Market<'a> {
         self.orders.contains_key(&order_id)
     }
 
-    pub fn add_market_bid(&mut self, mut quantity: f32) -> (bool, f32) {
+    pub fn add_market_bid(&mut self, quantity: f32) -> (bool, f32) {
         if self.lowest_ask == f32::INFINITY {
             return (false, quantity);
         }
 
-        let mut cursor = self
-            .ask_levels
-            .lower_bound_mut(Included(&PriceLevelKeyAsk::new(self.lowest_ask)));
+        let quantity_remaining = self.execute_bid(None, quantity);
 
-        // iterate over price levels
-        while quantity > 0.0 && cursor.value().is_some() {
-            let level = cursor.value_mut().unwrap();
-
-            // iterate over orders within a single price level
-            while quantity > 0.0 && level.peek_next_order().is_some() {
-                let next_order = level.peek_next_order().unwrap();
-
-                match next_order.quantity() <= quantity {
-                    true => {
-                        quantity -= next_order.quantity();
-                        self.orders.remove(&next_order.id());
-                        level.remove_next_order();
-                    }
-                    false => {
-                        next_order.remove_quantity(quantity);
-                        quantity = 0.0;
-                    }
-                }
-            }
-
-            if quantity > 0.0 {
-                cursor.move_next();
-            }
-        }
-
-        if quantity > 0.0 {
-            self.lowest_ask = f32::INFINITY;
-            return (false, quantity);
-        } else {
-            let cursor_price = cursor.value().unwrap().price();
-            self.reset_best_ask(Some(cursor_price));
+        if quantity_remaining == 0.0 {
             return (true, 0.0);
+        } else {
+            return (false, quantity_remaining);
         }
     }
 
-    pub fn add_market_ask(&mut self, mut quantity: f32) -> (bool, f32) {
+    pub fn add_market_ask(&mut self, quantity: f32) -> (bool, f32) {
         if self.highest_bid == f32::NEG_INFINITY {
             return (false, quantity);
         }
 
-        let mut cursor = self
-            .bid_levels
-            .lower_bound_mut(Included(&PriceLevelKeyBid::new(self.highest_bid)));
+        let quantity_remaining = self.execute_ask(None, quantity);
 
-        // iterate over price levels
-        while quantity > 0.0 && cursor.value().is_some() {
-            let level = cursor.value_mut().unwrap();
-
-            // iterate over orders within a single price level
-            while quantity > 0.0 && level.peek_next_order().is_some() {
-                let next_order = level.peek_next_order().unwrap();
-
-                match next_order.quantity() <= quantity {
-                    true => {
-                        quantity -= next_order.quantity();
-                        self.orders.remove(&next_order.id());
-                        level.remove_next_order();
-                    }
-                    false => {
-                        next_order.remove_quantity(quantity);
-                        quantity = 0.0;
-                    }
-                }
-            }
-
-            if quantity > 0.0 {
-                cursor.move_next();
-            }
-        }
-
-        if quantity > 0.0 {
-            self.highest_bid = f32::NEG_INFINITY;
-            return (false, quantity);
-        } else {
-            let cursor_price = cursor.value().unwrap().price();
-            self.reset_best_bid(Some(cursor_price));
+        if quantity_remaining == 0.0 {
             return (true, 0.0);
+        } else {
+            return (false, quantity_remaining);
         }
     }
 
@@ -142,7 +80,7 @@ impl<'a> Market<'a> {
 
         // marketable order
         if price >= self.lowest_ask {
-            quantity = self.execute_limit_bid(price, quantity);
+            quantity = self.execute_bid(Some(price), quantity);
         }
 
         if quantity <= 0.0 {
@@ -179,7 +117,7 @@ impl<'a> Market<'a> {
 
         // marketable order
         if price <= self.highest_bid {
-            quantity = self.execute_limit_ask(price, quantity);
+            quantity = self.execute_ask(Some(price), quantity);
         }
 
         if quantity <= 0.0 {
@@ -241,21 +179,26 @@ impl<'a> Market<'a> {
         }
     }
 
-    fn execute_limit_bid(&mut self, price: f32, mut quantity: f32) -> f32 {
-        let range_start = PriceLevelKeyAsk::new(self.lowest_ask);
-        let range_end = PriceLevelKeyAsk::new(price);
+    fn execute_ask(&mut self, price: Option<f32>, mut quantity: f32) -> f32 {
+        let price = price.unwrap_or_else(|| f32::NEG_INFINITY);
 
-        let mut final_reached = self.lowest_ask;
-        let mut final_has_quantity = true;
+        let mut cursor = self
+            .bid_levels
+            .lower_bound_mut(Included(&PriceLevelKeyBid::new(self.highest_bid)));
 
-        for (_, price_level) in self.ask_levels.range_mut(range_start..=range_end) {
-            while quantity > 0.0 && price_level.peek_next_order().is_some() {
-                let next_order = price_level.peek_next_order().unwrap();
+        // iterate over price levels
+        while quantity > 0.0 && cursor.value().is_some() {
+            let level = cursor.value_mut().unwrap();
+
+            // iterate over orders within a single price level
+            while quantity > 0.0 && level.peek_next_order().is_some() {
+                let next_order = level.peek_next_order().unwrap();
+
                 match next_order.quantity() <= quantity {
                     true => {
                         quantity -= next_order.quantity();
                         self.orders.remove(&next_order.id());
-                        price_level.remove_next_order();
+                        level.remove_next_order();
                     }
                     false => {
                         next_order.remove_quantity(quantity);
@@ -264,38 +207,43 @@ impl<'a> Market<'a> {
                 }
             }
 
-            final_reached = price_level.price();
-            final_has_quantity = price_level.quantity() > 0.0;
-
-            if quantity == 0.0 {
+            if quantity > 0.0 && level.price() >= price {
+                cursor.move_next();
+            } else {
                 break;
             }
         }
 
-        if final_has_quantity {
-            self.lowest_ask = final_reached;
+        if quantity > 0.0 {
+            self.highest_bid = f32::NEG_INFINITY;
+            return quantity;
         } else {
-            self.reset_best_ask(Some(final_reached));
+            let cursor_price = cursor.value().unwrap().price();
+            self.reset_best_bid(Some(cursor_price));
+            return 0.0;
         }
-
-        quantity
     }
 
-    fn execute_limit_ask(&mut self, price: f32, mut quantity: f32) -> f32 {
-        let range_start = PriceLevelKeyBid::new(self.highest_bid);
-        let range_end = PriceLevelKeyBid::new(price);
+    fn execute_bid(&mut self, price: Option<f32>, mut quantity: f32) -> f32 {
+        let price = price.unwrap_or_else(|| f32::INFINITY);
 
-        let mut final_reached = self.lowest_ask;
-        let mut final_has_quantity = true;
+        let mut cursor = self
+            .ask_levels
+            .lower_bound_mut(Included(&PriceLevelKeyAsk::new(self.lowest_ask)));
 
-        for (_, price_level) in self.bid_levels.range_mut(range_start..=range_end) {
-            while quantity > 0.0 && price_level.peek_next_order().is_some() {
-                let next_order = price_level.peek_next_order().unwrap();
+        // iterate over price levels
+        while quantity > 0.0 && cursor.value().is_some() {
+            let level = cursor.value_mut().unwrap();
+
+            // iterate over orders within a single price level
+            while quantity > 0.0 && level.peek_next_order().is_some() {
+                let next_order = level.peek_next_order().unwrap();
+
                 match next_order.quantity() <= quantity {
                     true => {
                         quantity -= next_order.quantity();
                         self.orders.remove(&next_order.id());
-                        price_level.remove_next_order();
+                        level.remove_next_order();
                     }
                     false => {
                         next_order.remove_quantity(quantity);
@@ -304,21 +252,21 @@ impl<'a> Market<'a> {
                 }
             }
 
-            final_reached = price_level.price();
-            final_has_quantity = price_level.quantity() > 0.0;
-
-            if quantity == 0.0 {
+            if quantity > 0.0 && level.price() <= price {
+                cursor.move_next();
+            } else {
                 break;
             }
         }
 
-        if final_has_quantity {
-            self.highest_bid = final_reached;
+        if quantity > 0.0 {
+            self.lowest_ask = f32::INFINITY;
+            return quantity;
         } else {
-            self.reset_best_bid(Some(final_reached));
+            let cursor_price = cursor.value().unwrap().price();
+            self.reset_best_ask(Some(cursor_price));
+            return 0.0;
         }
-
-        quantity
     }
 
     fn reset_best_bid(&mut self, mut cursor: Option<f32>) {
